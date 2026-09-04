@@ -361,8 +361,9 @@
     <!-- ===== 花瓣容器 ===== -->
     <div class="petals-container" id="petalsContainer" aria-hidden="true"></div>
 
-    <!-- ===== 背景音乐（Web Audio API 合成） ===== -->
-    <audio id="bgMusic" loop preload="auto"></audio>
+    <!-- ===== 背景音乐（本地文件路径） ===== -->
+    <!-- 注意：请确保文件路径正确且浏览器允许访问本地文件 -->
+    <audio id="bgMusic" src="D:\桌面文件\index" loop preload="auto"></audio>
 
     <!-- ===== 圆点导航 ===== -->
     <nav class="dot-nav" id="dotNav" aria-label="页面导航"></nav>
@@ -551,7 +552,7 @@
     (function() {
         'use strict';
         const WEDDING_DATE = new Date('2026-10-03T12:00:00+08:00');
-        const STORAGE_KEYS = { cover:'wedding_cover_v10', album:'wedding_album_v10', musicState:'wedding_music_v10', blessings:'wedding_blessings_v10', rsvp:'wedding_rsvp_v10' };
+        const STORAGE_KEYS = { cover:'wedding_cover_v12', album:'wedding_album_v12', musicState:'wedding_music_v12', blessings:'wedding_blessings_v12', rsvp:'wedding_rsvp_v12' };
         const SECTION_IDS = ['hero','countdown','story','album','info','schedule','rsvp','transport','blessing','ending'];
         const $ = (s) => document.querySelector(s);
         const $$ = (s) => document.querySelectorAll(s);
@@ -572,7 +573,6 @@
         const blessingList = $('#blessingList'), blessingName = $('#blessingName'), blessingText = $('#blessingText'), blessingSubmit = $('#blessingSubmit');
         const shareBtn = $('#shareBtn'), shareGuide = $('#shareGuide');
         let albumPhotos = [], currentAlbumIndex = 0, musicPlaying = false, countdownInterval = null, coverBgData = null;
-        let audioCtx = null, musicGainNode = null, musicTimer = null, musicStep = 0;
 
         function loadFromStorage(k, fb) { try { const d = localStorage.getItem(k); return d ? JSON.parse(d) : fb; } catch { return fb; } }
         function saveToStorage(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {} }
@@ -594,20 +594,15 @@
         const ICON_NAMES = Object.keys(ICON_SVGS);
 
         function generateBackgroundIcons() {
-            // 为每个 section 生成独立的图标层
             document.querySelectorAll('.section, .hero-section').forEach(section => {
                 let existing = section.querySelector('.section-patterns');
                 if (existing) existing.remove();
-
                 const patternLayer = document.createElement('div');
                 patternLayer.className = 'section-patterns';
                 section.appendChild(patternLayer);
-
                 const sectionWidth = section.offsetWidth || section.clientWidth;
                 const sectionHeight = section.offsetHeight || section.clientHeight;
                 if (sectionWidth === 0 || sectionHeight === 0) return;
-
-                // 计算内容区域（section-inner）的边界
                 const inner = section.querySelector('.section-inner, .hero-content');
                 let contentRect = null;
                 if (inner) {
@@ -620,7 +615,6 @@
                         bottom: innerRect.bottom - sectionRect.top
                     };
                 }
-
                 const avgIconSize = 45;
                 const iconArea = avgIconSize * avgIconSize;
                 const totalArea = sectionWidth * sectionHeight;
@@ -628,12 +622,10 @@
                 let iconCount = Math.floor(targetArea / iconArea);
                 iconCount = Math.max(8, Math.min(iconCount, 35));
                 if (window.innerWidth <= 480) iconCount = Math.min(iconCount, 18);
-
                 const colors = ['red', 'gold', 'brown'];
                 let placed = 0;
                 let maxAttempts = iconCount * 20;
                 let attempts = 0;
-
                 while (placed < iconCount && attempts < maxAttempts) {
                     attempts++;
                     const size = 35 + Math.random() * 30;
@@ -641,8 +633,6 @@
                     const maxTop = Math.max(0, sectionHeight - size - 8);
                     const left = Math.random() * maxLeft;
                     const top = Math.random() * maxTop;
-
-                    // 检查是否与内容区域重叠
                     if (contentRect) {
                         const iconRect = { left, right: left + size, top, bottom: top + size };
                         const overlap = !(iconRect.right < contentRect.left ||
@@ -651,7 +641,6 @@
                                          iconRect.top > contentRect.bottom);
                         if (overlap) continue;
                     }
-
                     const name = ICON_NAMES[Math.floor(Math.random() * ICON_NAMES.length)];
                     const div = document.createElement('div');
                     div.className = 'section-pattern-item ' + colors[Math.floor(Math.random() * colors.length)];
@@ -663,8 +652,6 @@
                     patternLayer.appendChild(div);
                     placed++;
                 }
-
-                // 如果因为内容区域过大导致图标不足，在安全边缘区域补充
                 if (placed < iconCount * 0.6 && contentRect) {
                     const edgeZones = [
                         { left: 0, right: sectionWidth, top: 0, bottom: Math.min(contentRect.top - 40, 100) },
@@ -715,51 +702,42 @@
             }
         }
 
-        // ===== Web Audio API 国风音乐合成 =====
-        const PENTATONIC = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.26];
-        const MELODY = [0,2,3,5,3,2,0,0,0,2,3,5,3,2,0,0,3,5,3,2,0,2,0,0,2,3,2,0,3,5,3,2,0,2,3,5,6,5,3,2,3,2,0,0,2,3,2,0,3,5,3,2,0,2,0,0,2,3,2,0,3,5,3,2];
-        const BASS = [0,0,3,0,2,0,0,0,0,0,3,0,2,0,0,0];
-        function getNoteFreq(step) { return PENTATONIC[step % PENTATONIC.length]; }
-        function playNote(time, freq, duration, gainVal) {
-            if (!audioCtx || !musicGainNode) return;
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.type = 'sine';
-            osc.frequency.value = freq;
-            gain.gain.setValueAtTime(0, time);
-            gain.gain.linearRampToValueAtTime(gainVal, time + 0.02);
-            gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
-            osc.connect(gain);
-            gain.connect(musicGainNode);
-            osc.start(time);
-            osc.stop(time + duration + 0.05);
-        }
-        function scheduleMusicStep(time, step) {
-            const melodyIdx = step % MELODY.length;
-            const bassIdx = step % BASS.length;
-            const melodyFreq = getNoteFreq(MELODY[melodyIdx]);
-            const bassFreq = getNoteFreq(BASS[bassIdx] + 3);
-            playNote(time, melodyFreq, 0.32, 0.18);
-            playNote(time + 0.04, bassFreq, 0.5, 0.1);
-            if (step % 4 === 0) playNote(time + 0.1, melodyFreq * 2, 0.25, 0.08);
-        }
-        function startMusic() {
-            if (!audioCtx) { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); musicGainNode = audioCtx.createGain(); musicGainNode.gain.setValueAtTime(0.6, audioCtx.currentTime); musicGainNode.connect(audioCtx.destination); }
-            if (audioCtx.state === 'suspended') audioCtx.resume();
-            if (musicTimer) clearInterval(musicTimer);
-            musicStep = 0;
-            function scheduleLoop() {
-                const now = audioCtx.currentTime;
-                for (let i = 0; i < 4; i++) scheduleMusicStep(now + i * 0.16, musicStep + i);
-                musicStep += 4;
-                musicTimer = setTimeout(scheduleLoop, 320);
+        // ===== 音乐控制（HTML5 Audio） =====
+        function initMusic() {
+            const saved = loadFromStorage(STORAGE_KEYS.musicState, { playing: false });
+            musicPlaying = saved.playing || false;
+            updateMusicUI();
+            if (musicPlaying && bgMusic.getAttribute('src')) {
+                bgMusic.play().catch(() => {
+                    musicPlaying = false;
+                    updateMusicUI();
+                    saveToStorage(STORAGE_KEYS.musicState, { playing: false });
+                });
             }
-            scheduleLoop();
         }
-        function stopMusic() { if (musicTimer) { clearInterval(musicTimer); musicTimer = null; } if (audioCtx && musicGainNode) musicGainNode.gain.setValueAtTime(0.0001, audioCtx.currentTime); }
-        function initMusic() { const saved = loadFromStorage(STORAGE_KEYS.musicState, { playing: false }); musicPlaying = saved.playing || false; updateMusicUI(); if (musicPlaying) startMusic(); }
-        function updateMusicUI() { musicIndicator.classList.toggle('show', musicPlaying); musicToggle.querySelector('.btn-label').textContent = musicPlaying ? '🔊' : '♪'; }
-        function toggleMusic() { if (musicPlaying) { stopMusic(); musicPlaying = false; } else { startMusic(); musicPlaying = true; } updateMusicUI(); saveToStorage(STORAGE_KEYS.musicState, { playing: musicPlaying }); }
+        function updateMusicUI() {
+            musicIndicator.classList.toggle('show', musicPlaying);
+            musicToggle.querySelector('.btn-label').textContent = musicPlaying ? '🔊' : '♪';
+        }
+        function toggleMusic() {
+            const hasSrc = bgMusic.getAttribute('src') && bgMusic.getAttribute('src').length > 0;
+            if (!hasSrc || bgMusic.getAttribute('src') === 'D:\\桌面文件\\index') {
+                alert('请确认音频文件路径正确且浏览器允许访问本地文件');
+                return;
+            }
+            if (musicPlaying) {
+                bgMusic.pause();
+                musicPlaying = false;
+            } else {
+                bgMusic.play().then(() => {
+                    musicPlaying = true;
+                }).catch(() => {
+                    musicPlaying = false;
+                });
+            }
+            updateMusicUI();
+            saveToStorage(STORAGE_KEYS.musicState, { playing: musicPlaying });
+        }
         musicToggle.addEventListener('click', toggleMusic);
 
         // ===== 封面背景 =====
